@@ -1,41 +1,44 @@
 // ==UserScript==
-// @name         IITM Placement Portal – Tick Button Credits Selector
+// @name         IITM Placement Portal – Conditional Tick/X Selector (Cross in Company Column)
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Add a tick button in the S.No. column, sum credits across pages, and persist selections via localStorage.  Hooks into Bootstrap Table’s post-body event so the tick doesn’t disappear when the table re-renders.
+// @version      1.8
+// @description  Add a tick button in the S.No. column and a cross button in the Company Name column.  The tick sums credits, and the cross strikes out the entire row.  Buttons appear only when the Action column contains “Yet To Open” or “Register,” and selections persist across pages and sessions.  Controls are scaled down to 70% and the cross appears after the company name.
 // @match        https://placement.iitm.ac.in/students-all-companies*
 // @run-at       document-end
 // @grant        none
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
 
-    const STORAGE_KEY = 'iitmPlacementSelectedCredits';
+    const SELECT_KEY = 'iitmPlacementSelectedCredits';
+    const CROSS_KEY  = 'iitmPlacementCrossedRows';
 
-    function getSelected() {
-        const stored = localStorage.getItem(STORAGE_KEY);
+    // Helpers to get and save JSON from localStorage
+    function getObj(key) {
+        const raw = localStorage.getItem(key);
         try {
-            return stored ? JSON.parse(stored) : {};
+            return raw ? JSON.parse(raw) : {};
         } catch {
             return {};
         }
     }
-
-    function saveSelected(selected) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(selected));
+    function saveObj(key, obj) {
+        localStorage.setItem(key, JSON.stringify(obj));
     }
 
+    // Update the summary line showing number selected and total credits
     function updateStat() {
-        const selected = getSelected();
-        const count = Object.keys(selected).length;
-        const totalCredits = Object.values(selected).reduce((sum, c) => sum + c, 0);
+        const selected = getObj(SELECT_KEY);
+        const count    = Object.keys(selected).length;
+        const total    = Object.values(selected).reduce((sum, c) => sum + c, 0);
         const statElem = document.getElementById('iitm-credit-stat');
         if (statElem) {
-            statElem.textContent = `Selected: ${count}, Credit req: ${totalCredits}`;
+            statElem.textContent = `Selected: ${count}, Credit req: ${total}`;
         }
     }
 
+    // Insert or locate the stat label near existing controls
     function insertStatLabel() {
         if (document.getElementById('iitm-credit-stat')) return;
         const stat = document.createElement('span');
@@ -53,84 +56,186 @@
         } else {
             document.body.insertBefore(stat, document.body.firstChild);
         }
-    }
-
-    function createTickButton(cell, slNo, uniqueKey, credits) {
-        // If a button already exists, no need to add another
-        if (cell.querySelector('.iitm-credit-btn')) return;
-
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'iitm-credit-btn btn btn-outline-secondary btn-sm';
-        btn.textContent = '✓';
-        btn.style.marginRight = '4px';
-
-        const selected = getSelected();
-        const isSelected = selected[uniqueKey] !== undefined;
-        btn.dataset.selected = isSelected ? 'true' : 'false';
-        if (isSelected) {
-            btn.classList.remove('btn-outline-secondary');
-            btn.classList.add('btn-success');
-        }
-
-        btn.addEventListener('click', () => {
-            let current = getSelected();
-            const state = btn.dataset.selected === 'true';
-            if (state) {
-                btn.dataset.selected = 'false';
-                btn.classList.remove('btn-success');
-                btn.classList.add('btn-outline-secondary');
-                delete current[uniqueKey];
-            } else {
-                btn.dataset.selected = 'true';
-                btn.classList.remove('btn-outline-secondary');
-                btn.classList.add('btn-success');
-                current[uniqueKey] = credits;
-            }
-            saveSelected(current);
-            updateStat();
-        });
-
-        // Rebuild cell contents
-        cell.innerHTML = '';
-        cell.appendChild(btn);
-        const slSpan = document.createElement('span');
-        slSpan.textContent = slNo;
-        cell.appendChild(slSpan);
-    }
-
-    function addTickButtons() {
-        const pageParam = new URL(window.location.href).searchParams.get('page') || '1';
-        const rows = document.querySelectorAll('table tbody tr');
-        rows.forEach(row => {
-            const cells = row.cells;
-            if (!cells || cells.length < 4) return;
-            const cell = cells[0];
-            const slNo = cell.innerText.trim();
-            const companyName = cells[1].innerText.trim();
-            const profileName = cells[2].innerText.trim();
-            const creditsText = cells[3].innerText.trim();
-            const credits = /^\d+$/.test(creditsText) ? parseInt(creditsText) : 0;
-            const dataIndex = row.getAttribute('data-index') || '';
-            const uniqueKey = `${companyName}|${profileName}|${credits}|p${pageParam}i${dataIndex}`;
-            createTickButton(cell, slNo, uniqueKey, credits);
-        });
-    }
-
-    // This function is called after every table render
-    function handleTableRendered() {
-        insertStatLabel();
-        addTickButtons();
         updateStat();
     }
 
-    // Run once when the script loads
-    handleTableRendered();
-
-    // Hook into Bootstrap Table’s `post-body` event to reapply ticks after each render
-    const table = document.querySelector('table[data-toggle="table"]');
-    if (table) {
-        // Bootstrap Table triggers a custom event after it renders rows
-        table.addEventListener('post-body.bs.table', handleTableRendered);
+    // Apply or remove strikethrough styling on the entire row
+    function applyCrossStyle(row, isCrossed) {
+        if (isCrossed) {
+            row.classList.add('iitm-crossed');
+            row.style.textDecoration = 'line-through';
+            row.style.opacity        = '0.5';
+        } else {
+            row.classList.remove('iitm-crossed');
+            row.style.textDecoration = '';
+            row.style.opacity        = '';
+        }
     }
+
+    // Build a tick button in the S.No. cell
+    function buildTick(cell, row, slNo, uniqueKey, credits, isSelected) {
+        // Remove existing tick if any
+        const existing = cell.querySelector('.iitm-credit-btn');
+        if (existing) existing.remove();
+
+        // Create tick button
+        const tickBtn = document.createElement('button');
+        tickBtn.type      = 'button';
+        tickBtn.className = 'iitm-credit-btn btn btn-outline-secondary btn-sm';
+        tickBtn.textContent = '✓';
+        tickBtn.style.transform       = 'scale(0.7)';
+        tickBtn.style.transformOrigin = 'left center';
+        tickBtn.style.display         = 'inline-block';
+        tickBtn.dataset.selected = isSelected ? 'true' : 'false';
+        if (isSelected) {
+            tickBtn.classList.remove('btn-outline-secondary');
+            tickBtn.classList.add('btn-success');
+        }
+
+        tickBtn.addEventListener('click', () => {
+            const selected = getObj(SELECT_KEY);
+            const isSel    = tickBtn.dataset.selected === 'true';
+            if (isSel) {
+                tickBtn.dataset.selected = 'false';
+                tickBtn.classList.remove('btn-success');
+                tickBtn.classList.add('btn-outline-secondary');
+                delete selected[uniqueKey];
+            } else {
+                tickBtn.dataset.selected = 'true';
+                tickBtn.classList.remove('btn-outline-secondary');
+                tickBtn.classList.add('btn-success');
+                selected[uniqueKey] = credits;
+            }
+            saveObj(SELECT_KEY, selected);
+            updateStat();
+        });
+
+        // Replace the cell content with tick + number
+        cell.innerHTML = '';
+        cell.style.whiteSpace = 'nowrap';
+        cell.appendChild(tickBtn);
+        const numSpan = document.createElement('span');
+        numSpan.textContent = slNo;
+        cell.appendChild(numSpan);
+    }
+
+    // Build a cross button in the Company Name cell
+    function buildCross(companyCell, row, uniqueKey, isCrossed) {
+        // Remove existing cross if any
+        const existingCross = companyCell.querySelector('.iitm-cross-btn');
+        if (existingCross) existingCross.remove();
+
+        // Create cross button
+        const crossBtn = document.createElement('button');
+        crossBtn.type      = 'button';
+        crossBtn.className = 'iitm-cross-btn btn btn-outline-danger btn-sm';
+        crossBtn.textContent = '×';
+        crossBtn.style.transform       = 'scale(0.7)';
+        crossBtn.style.transformOrigin = 'left center';
+        crossBtn.style.display         = 'inline-block';
+        // Place a margin on the left to separate from the text
+        crossBtn.style.marginLeft      = '4px';
+        crossBtn.dataset.crossed = isCrossed ? 'true' : 'false';
+        if (isCrossed) {
+            crossBtn.classList.remove('btn-outline-danger');
+            crossBtn.classList.add('btn-danger');
+        }
+
+        crossBtn.addEventListener('click', () => {
+            const crossed = getObj(CROSS_KEY);
+            const isCr    = crossBtn.dataset.crossed === 'true';
+            if (isCr) {
+                crossBtn.dataset.crossed = 'false';
+                crossBtn.classList.remove('btn-danger');
+                crossBtn.classList.add('btn-outline-danger');
+                delete crossed[uniqueKey];
+                applyCrossStyle(row, false);
+            } else {
+                crossBtn.dataset.crossed = 'true';
+                crossBtn.classList.remove('btn-outline-danger');
+                crossBtn.classList.add('btn-danger');
+                crossed[uniqueKey] = true;
+                applyCrossStyle(row, true);
+            }
+            saveObj(CROSS_KEY, crossed);
+        });
+
+        // Append cross button at the end of the company cell after existing content
+        companyCell.appendChild(crossBtn);
+    }
+
+    // Restore the S.No. cell to original content (remove tick)
+    function restoreTick(cell, slNo) {
+        if (cell.querySelector('.iitm-credit-btn')) {
+            cell.innerHTML = '';
+            cell.textContent = slNo;
+        }
+    }
+
+    // Restore the Company Name cell to original content (remove cross)
+    function restoreCross(companyCell) {
+        const crossBtn = companyCell.querySelector('.iitm-cross-btn');
+        if (crossBtn) crossBtn.remove();
+    }
+
+    // Apply controls to each row
+    function applyControls() {
+        const pageParam = new URL(window.location.href).searchParams.get('page') || '1';
+        const rows      = document.querySelectorAll('table tbody tr');
+
+        let selChanged   = false;
+        let crossChanged = false;
+
+        rows.forEach(row => {
+            const cells = row.cells;
+            if (!cells || cells.length < 5) return;
+            const snCell   = cells[0];
+            const companyCell = cells[1];
+            const slNo     = snCell.innerText.trim();
+            const company  = cells[1].innerText.trim();
+            const profile  = cells[2].innerText.trim();
+            const creditsText = cells[3].innerText.trim();
+            const credits  = /^\d+$/.test(creditsText) ? parseInt(creditsText) : 0;
+            const dataIndex= row.getAttribute('data-index') || '';
+            const uniqueKey = `${company}|${profile}|${credits}|p${pageParam}i${dataIndex}`;
+
+            const actionText = cells[cells.length - 1].innerText.trim().toLowerCase();
+            const selectable = actionText.includes('yet to open') || actionText.includes('register');
+
+            const selected   = getObj(SELECT_KEY);
+            const crossed    = getObj(CROSS_KEY);
+
+            if (selectable) {
+                const isSel = selected[uniqueKey] !== undefined;
+                const isCr  = crossed[uniqueKey] !== undefined;
+                buildTick(snCell, row, slNo, uniqueKey, credits, isSel);
+                buildCross(companyCell, row, uniqueKey, isCr);
+                applyCrossStyle(row, isCr);
+            } else {
+                restoreTick(snCell, slNo);
+                restoreCross(companyCell);
+                if (selected[uniqueKey] !== undefined) {
+                    delete selected[uniqueKey];
+                    selChanged = true;
+                }
+                if (crossed[uniqueKey] !== undefined) {
+                    delete crossed[uniqueKey];
+                    crossChanged = true;
+                    applyCrossStyle(row, false);
+                }
+                if (selChanged) saveObj(SELECT_KEY, selected);
+                if (crossChanged) saveObj(CROSS_KEY, crossed);
+            }
+        });
+    }
+
+    // Poll for table readiness and apply controls for a limited time
+    function applyWithPolling() {
+        insertStatLabel();
+        applyControls();
+        updateStat();
+
+    }
+
+    applyWithPolling();
 })();
