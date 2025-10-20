@@ -1,17 +1,19 @@
 # iitm-ux-scripts
 This repository hosts userscripts designed to enhance the student experience on the IITM placement portal
 
-### Hide Closed/Ineligible Rows
+## Hide closed and ineligible rows
 
-- The first script cleans up the company list by automatically hiding rows where the Action column indicates “Ineligible” or “Closed.” 
-- It also shortens long external‐link URLs, adjusts the table layout to eliminate horizontal scrolling, and
-- adds a toggle button near the page controls so you can show or hide the filtered rows at any time.
+The first script removes clutter by hiding rows where the Action column is Ineligible or Closed. It also shortens very long external‑link URLs, fits the table within the viewport without horizontal scrolling, and adds a toggle next to the page controls to show or hide the filtered entries.
 
-### Tick Button Credits Selector
+## Credits selector with tick and cross
 
-- The second script inserts a small tick button (✓) into the S.No. column of each row. Clicking the button selects that company and tallies its credit value.
-- A running total of the number of selected companies and the sum of credits appears next to the existing page buttons. 
-Selections persist across pagination and browser sessions via localStorage, so you can keep track of your credit usage as you browse.
+The second script adds compact controls to eligible rows (those whose Action is Yet To Open or Register):
+
+A tick (✓) in the S.No. column selects that row and adds its credit value to a running total. The summary of selected rows and total credits is displayed near the page controls and persists across pages and sessions via localStorage.
+
+A cross (×) appended to the Company Name cell strikes out the row when clicked. This cross state also persists.
+
+Both controls are scaled down and aligned inline to minimise space.
 
 ## Installation
 
