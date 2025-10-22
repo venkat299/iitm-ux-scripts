@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         IITM Placement Portal – Conditional Tick/X Selector (Cross in Company Column)
 // @namespace    http://tampermonkey.net/
-// @version      1.8
-// @description  Add a tick button in the S.No. column and a cross button in the Company Name column.  The tick sums credits, and the cross strikes out the entire row.  Buttons appear only when the Action column contains “Yet To Open” or “Register,” and selections persist across pages and sessions.  Controls are scaled down to 70% and the cross appears after the company name.
+// @version      1.9
+// @description  Add a tick button in the S.No. column and a cross button in the Company Name column. The tick sums credits, and the cross strikes out the entire row. Buttons appear only when the Action column contains “Yet To Open” or “Register,” and selections persist across pages and sessions. Controls are scaled down to 70%, the cross appears after the company name, and a "Clear ticks" button resets selected credits.
 // @match        https://placement.iitm.ac.in/students-all-companies*
 // @run-at       document-end
 // @grant        none
@@ -38,23 +38,53 @@
         }
     }
 
-    // Insert or locate the stat label near existing controls
+    // Insert or locate the stat label near existing controls, and add Clear button
     function insertStatLabel() {
-        if (document.getElementById('iitm-credit-stat')) return;
+        if (document.getElementById('iitm-credit-tools')) return;
+
+        const wrap = document.createElement('span');
+        wrap.id = 'iitm-credit-tools';
+        wrap.style.marginLeft = '10px';
+        wrap.style.fontWeight = 'bold';
+
         const stat = document.createElement('span');
         stat.id = 'iitm-credit-stat';
-        stat.style.marginLeft = '10px';
-        stat.style.fontWeight = 'bold';
+
+        const clearBtn = document.createElement('button');
+        clearBtn.id = 'iitm-clear-selected';
+        clearBtn.type = 'button';
+        clearBtn.className = 'btn btn-outline-secondary btn-sm';
+        clearBtn.textContent = 'Clear ticks';
+        clearBtn.style.transform = 'scale(0.7)';
+        clearBtn.style.transformOrigin = 'left center';
+        clearBtn.style.marginLeft = '8px';
+
+        clearBtn.addEventListener('click', () => {
+            // Reset persistent selected credits
+            saveObj(SELECT_KEY, {});
+            // Reset all tick buttons visually
+            document.querySelectorAll('.iitm-credit-btn').forEach(btn => {
+                btn.dataset.selected = 'false';
+                btn.classList.remove('btn-success');
+                if (!btn.classList.contains('btn-outline-secondary')) {
+                    btn.classList.add('btn-outline-secondary');
+                }
+            });
+            updateStat();
+        });
+
+        wrap.appendChild(stat);
+        wrap.appendChild(clearBtn);
 
         const toggleBtn = document.getElementById('tm-toggle-hidden');
         const creditBtn = Array.from(document.querySelectorAll('button'))
             .find(btn => btn.textContent.trim().toLowerCase().includes('credit info'));
         if (toggleBtn && toggleBtn.parentNode) {
-            toggleBtn.parentNode.insertBefore(stat, toggleBtn.nextSibling);
+            toggleBtn.parentNode.insertBefore(wrap, toggleBtn.nextSibling);
         } else if (creditBtn && creditBtn.parentNode) {
-            creditBtn.parentNode.insertBefore(stat, creditBtn.nextSibling);
+            creditBtn.parentNode.insertBefore(wrap, creditBtn.nextSibling);
         } else {
-            document.body.insertBefore(stat, document.body.firstChild);
+            document.body.insertBefore(wrap, document.body.firstChild);
         }
         updateStat();
     }
@@ -74,11 +104,9 @@
 
     // Build a tick button in the S.No. cell
     function buildTick(cell, row, slNo, uniqueKey, credits, isSelected) {
-        // Remove existing tick if any
         const existing = cell.querySelector('.iitm-credit-btn');
         if (existing) existing.remove();
 
-        // Create tick button
         const tickBtn = document.createElement('button');
         tickBtn.type      = 'button';
         tickBtn.className = 'iitm-credit-btn btn btn-outline-secondary btn-sm';
@@ -110,7 +138,6 @@
             updateStat();
         });
 
-        // Replace the cell content with tick + number
         cell.innerHTML = '';
         cell.style.whiteSpace = 'nowrap';
         cell.appendChild(tickBtn);
@@ -121,11 +148,9 @@
 
     // Build a cross button in the Company Name cell
     function buildCross(companyCell, row, uniqueKey, isCrossed) {
-        // Remove existing cross if any
         const existingCross = companyCell.querySelector('.iitm-cross-btn');
         if (existingCross) existingCross.remove();
 
-        // Create cross button
         const crossBtn = document.createElement('button');
         crossBtn.type      = 'button';
         crossBtn.className = 'iitm-cross-btn btn btn-outline-danger btn-sm';
@@ -133,7 +158,6 @@
         crossBtn.style.transform       = 'scale(0.7)';
         crossBtn.style.transformOrigin = 'left center';
         crossBtn.style.display         = 'inline-block';
-        // Place a margin on the left to separate from the text
         crossBtn.style.marginLeft      = '4px';
         crossBtn.dataset.crossed = isCrossed ? 'true' : 'false';
         if (isCrossed) {
@@ -160,7 +184,6 @@
             saveObj(CROSS_KEY, crossed);
         });
 
-        // Append cross button at the end of the company cell after existing content
         companyCell.appendChild(crossBtn);
     }
 
@@ -180,8 +203,7 @@
 
     // Apply controls to each row
     function applyControls() {
-        const pageParam = new URL(window.location.href).searchParams.get('page') || '1';
-        const rows      = document.querySelectorAll('table tbody tr');
+        const rows = document.querySelectorAll('table tbody tr');
 
         let selChanged   = false;
         let crossChanged = false;
@@ -196,8 +218,7 @@
             const profile  = cells[2].innerText.trim();
             const creditsText = cells[3].innerText.trim();
             const credits  = /^\d+$/.test(creditsText) ? parseInt(creditsText) : 0;
-            const dataIndex= row.getAttribute('data-index') || '';
-            const uniqueKey = `${company}|${profile}|${credits}|p${pageParam}i${dataIndex}`;
+            const uniqueKey = `${company}|${profile}|${credits}`;
 
             const actionText = cells[cells.length - 1].innerText.trim().toLowerCase();
             const selectable = actionText.includes('yet to open') || actionText.includes('register');
@@ -223,18 +244,17 @@
                     crossChanged = true;
                     applyCrossStyle(row, false);
                 }
-                if (selChanged) saveObj(SELECT_KEY, selected);
-                if (crossChanged) saveObj(CROSS_KEY, crossed);
             }
+
+            if (selChanged) saveObj(SELECT_KEY, getObj(SELECT_KEY));
+            if (crossChanged) saveObj(CROSS_KEY, getObj(CROSS_KEY));
         });
     }
 
-    // Poll for table readiness and apply controls for a limited time
     function applyWithPolling() {
         insertStatLabel();
         applyControls();
         updateStat();
-
     }
 
     applyWithPolling();
