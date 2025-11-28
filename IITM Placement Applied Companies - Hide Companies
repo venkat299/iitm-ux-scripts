@@ -1,0 +1,212 @@
+// ==UserScript==
+// @name         IITM Placement Applied Companies - Hide Companies
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Add per-row hide/unhide button and a global toggle for hidden companies on IITM applied companies page.
+// @match        https://placement.iitm.ac.in/students-applied-companies*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const STORAGE_KEY = 'iitmPlacementHiddenCompanies';
+    let hiddenKeys = [];
+    let showHidden = false;
+
+    function loadHiddenKeys() {
+        try {
+            const data = localStorage.getItem(STORAGE_KEY);
+            hiddenKeys = data ? JSON.parse(data) : [];
+            if (!Array.isArray(hiddenKeys)) hiddenKeys = [];
+        } catch (e) {
+            hiddenKeys = [];
+        }
+    }
+
+    function saveHiddenKeys() {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify([...new Set(hiddenKeys)]));
+    }
+
+    function isHiddenKey(key) {
+        return hiddenKeys.includes(key);
+    }
+
+    function addHiddenKey(key) {
+        if (!hiddenKeys.includes(key)) {
+            hiddenKeys.push(key);
+            saveHiddenKeys();
+        }
+    }
+
+    function removeHiddenKey(key) {
+        hiddenKeys = hiddenKeys.filter(k => k !== key);
+        saveHiddenKeys();
+    }
+
+    function createStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
+            .pm-hidden-toggle-btn {
+                margin-right: 0.75rem;
+            }
+            tr.pm-is-hidden {
+                opacity: 0.6;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function getActionsColumnIndex(table) {
+        const ths = table.querySelectorAll('thead th');
+        for (let i = 0; i < ths.length; i++) {
+            const text = ths[i].textContent.trim();
+            if (text === 'Actions') {
+                return i;
+            }
+        }
+        // Fallback to last column if not found
+        return ths.length - 1;
+    }
+
+    function makeRowKey(row) {
+        // Company name = column 2, Profile = column 3 (0-based index 1 & 2)
+        const cells = row.children;
+        if (cells.length < 3) return null;
+        const company = cells[1].textContent.trim();
+        const profile = cells[2].textContent.trim();
+        if (!company || !profile) return null;
+        return `${company} | ${profile}`;
+    }
+
+    function updateRowVisibility(row) {
+        const key = row.dataset.companyKey;
+        if (!key) return;
+        const isHidden = isHiddenKey(key);
+        row.classList.toggle('pm-is-hidden', isHidden);
+
+        const btn = row.querySelector('.pm-hide-btn');
+        if (btn) {
+            if (isHidden) {
+                btn.textContent = 'Unhide';
+                btn.title = 'Show this company in the list';
+            } else {
+                btn.textContent = 'Hide';
+                btn.title = 'Hide this company from the list';
+            }
+        }
+
+        // Actual display logic
+        if (isHidden && !showHidden) {
+            row.style.display = 'none';
+        } else {
+            row.style.display = '';
+        }
+    }
+
+    function updateAllRowsVisibility(table) {
+        const rows = table.querySelectorAll('tbody tr');
+        rows.forEach(row => updateRowVisibility(row));
+    }
+
+    function updateToggleButtonLabel(btn) {
+        const count = hiddenKeys.length;
+        if (!btn) return;
+        if (showHidden) {
+            btn.textContent = `Hide hidden (${count})`;
+        } else {
+            btn.textContent = `Show hidden (${count})`;
+        }
+    }
+
+    function initGlobalToggleButton(table) {
+        const toolbar = document.querySelector('.fixed-table-toolbar') || table.parentElement;
+        if (!toolbar) return;
+
+        const container = toolbar.querySelector('.search')?.parentElement || toolbar;
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'btn btn-sm btn-outline-secondary pm-hidden-toggle-btn';
+        toggleBtn.id = 'pm-toggle-hidden-companies';
+        toggleBtn.addEventListener('click', () => {
+            showHidden = !showHidden;
+            updateAllRowsVisibility(table);
+            updateToggleButtonLabel(toggleBtn);
+        });
+
+        updateToggleButtonLabel(toggleBtn);
+        container.insertBefore(toggleBtn, container.firstChild);
+    }
+
+    function initRowButtons(table) {
+        const actionsIndex = getActionsColumnIndex(table);
+        const rows = table.querySelectorAll('tbody tr');
+
+        rows.forEach(row => {
+            const key = makeRowKey(row);
+            if (!key) return;
+            row.dataset.companyKey = key;
+
+            const actionsCell = row.children[actionsIndex];
+            if (!actionsCell) return;
+
+            // Clear existing "-" or content and insert our button
+            actionsCell.textContent = '';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn btn-sm btn-outline-danger pm-hide-btn';
+            btn.style.whiteSpace = 'nowrap';
+
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const k = row.dataset.companyKey;
+                if (!k) return;
+                if (isHiddenKey(k)) {
+                    removeHiddenKey(k);
+                } else {
+                    addHiddenKey(k);
+                }
+                updateRowVisibility(row);
+
+                const toggleBtn = document.getElementById('pm-toggle-hidden-companies');
+                if (toggleBtn) {
+                    updateToggleButtonLabel(toggleBtn);
+                }
+            });
+
+            actionsCell.appendChild(btn);
+            updateRowVisibility(row);
+        });
+    }
+
+    function waitForTableAndInit() {
+        const existing = document.querySelector('table.basictable');
+        if (existing) {
+            setup(existing);
+            return;
+        }
+
+        const observer = new MutationObserver(() => {
+            const table = document.querySelector('table.basictable');
+            if (table) {
+                observer.disconnect();
+                setup(table);
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    function setup(table) {
+        loadHiddenKeys();
+        createStyles();
+        initRowButtons(table);
+        initGlobalToggleButton(table);
+        updateAllRowsVisibility(table);
+    }
+
+    // Start
+    waitForTableAndInit();
+
+})();
